@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Chord Binder</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;600&family=Instrument+Sans:wght@400;600;700&display=swap" rel="stylesheet">
+<style>
+:root{
+  --bg:#eef1f4; --panel:#ffffff; --ink:#1b2430; --muted:#5d6b7b; --line:#d5dbe2;
+  --chord:#1a56b8; --accent:#1a56b8; --accent-ink:#ffffff; --mark:#ffe36e;
+  --ui:'Instrument Sans',system-ui,sans-serif; --mono:'IBM Plex Mono',ui-monospace,Menlo,Consolas,monospace;
+}
+@media (prefers-color-scheme:dark){
+  :root:not([data-theme="light"]){--bg:#12171d;--panel:#1a2129;--ink:#e6ebf0;--muted:#92a0af;--line:#2c3743;--chord:#7fb2ff;--accent:#7fb2ff;--accent-ink:#0d1620;--mark:#6d5a00}
+}
+:root[data-theme="dark"]{--bg:#12171d;--panel:#1a2129;--ink:#e6ebf0;--muted:#92a0af;--line:#2c3743;--chord:#7fb2ff;--accent:#7fb2ff;--accent-ink:#0d1620;--mark:#6d5a00}
+*{box-sizing:border-box}
+html,body{height:100%}
+body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.5 var(--ui);display:flex;flex-direction:column}
+button,input{font:inherit;color:inherit}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px}
+header{display:flex;gap:12px;align-items:center;flex-wrap:wrap;padding:12px 16px;background:var(--panel);border-bottom:1px solid var(--line)}
+h1{font-size:18px;margin:0 8px 0 0;font-weight:700;letter-spacing:-.01em}
+#q{flex:1 1 220px;min-width:0;padding:9px 12px;border:1px solid var(--line);border-radius:6px;background:var(--bg)}
+.btn{padding:8px 14px;border:1px solid var(--line);border-radius:6px;background:var(--panel);cursor:pointer}
+.btn:hover{border-color:var(--accent)}
+.btn.primary{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:600}
+label.chk{display:flex;gap:6px;align-items:center;color:var(--muted);font-size:13px}
+main{flex:1;min-height:0;display:grid;grid-template-columns:320px 1fr}
+aside{border-right:1px solid var(--line);overflow:auto;background:var(--panel)}
+.meta{padding:10px 16px;color:var(--muted);font-size:13px;border-bottom:1px solid var(--line)}
+.song{display:block;width:100%;text-align:left;padding:10px 16px;border:0;border-bottom:1px solid var(--line);background:none;cursor:pointer}
+.song:hover{background:var(--bg)}
+.song[aria-current="true"]{background:var(--bg);box-shadow:inset 3px 0 0 var(--accent)}
+.song b{display:block;font-weight:600}
+.song span{color:var(--muted);font-size:12.5px}
+section{overflow:auto;padding:20px clamp(14px,4vw,40px) 60px}
+.bar{display:flex;flex-wrap:wrap;gap:10px;align-items:center;margin-bottom:14px;position:sticky;top:-20px;padding:10px 0;background:var(--bg);z-index:1}
+.bar h2{flex:1 1 100%;margin:0;font-size:24px;letter-spacing:-.01em}
+.grp{display:flex;align-items:center;border:1px solid var(--line);border-radius:6px;background:var(--panel);overflow:hidden}
+.grp button{border:0;background:none;padding:7px 12px;cursor:pointer;font-weight:600}
+.grp button:hover{background:var(--bg)}
+.grp output{min-width:92px;text-align:center;padding:0 8px;font-size:13px}
+pre{margin:0;font:var(--font-size,14px)/1.45 var(--mono);white-space:pre;overflow-x:auto;tab-size:4}
+.chord{color:var(--chord);font-weight:600}
+mark{background:var(--mark);color:inherit;border-radius:2px}
+.empty{max-width:46ch;margin:12vh auto;text-align:center;color:var(--muted)}
+.empty h2{color:var(--ink)}
+#drop.over{outline:2px dashed var(--accent);outline-offset:-8px}
+#status{color:var(--muted);font-size:13px}
+@media (max-width:760px){
+  main{grid-template-columns:1fr;grid-template-rows:minmax(120px,35%) 1fr}
+  aside{border-right:0;border-bottom:1px solid var(--line)}
+}
+</style>
+</head>
+<body>
+<header>
+  <h1>Chord Binder</h1>
+  <input id="q" type="search" placeholder="Search titles, lyrics or chords" aria-label="Search songs">
+  <button class="btn primary" id="add">Add PDF</button>
+  <input id="file" type="file" accept="application/pdf" multiple hidden>
+  <label class="chk"><input type="checkbox" id="perpage"> One song per page</label>
+  <button class="btn" id="clear">Clear library</button>
+  <button class="btn" id="theme" aria-label="Toggle dark mode">Theme</button>
+  <span id="status" role="status"></span>
+</header>
+<main id="drop">
+  <aside><div class="meta" id="count"></div><div id="list"></div></aside>
+  <section id="view"></section>
+</main>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.min.js"></script>
+<script>
+pdfjsLib.GlobalWorkerOptions.workerSrc = 'https://cdnjs.cloudflare.com/ajax/libs/pdf.js/3.11.174/pdf.worker.min.js';
+
+/* ---------- music helpers ---------- */
+const SHARP = ['C','C#','D','D#','E','F','F#','G','G#','A','A#','B'];
+const FLAT  = ['C','Db','D','Eb','E','F','Gb','G','Ab','A','Bb','B'];
+const NOTE = {C:0,'C#':1,Db:1,D:2,'D#':3,Eb:3,E:4,F:5,'F#':6,Gb:6,G:7,'G#':8,Ab:8,A:9,'A#':10,Bb:10,B:11};
+const CHORD_RE = /^\(?([A-G][#b]?)((?:maj|min|m|M|dim|aug|sus|add|\u00b0|\u00ba|\+|-)?[0-9]*(?:(?:sus|add|maj|M)?[0-9]+|[#b][0-9]+|\([^)]*\))*)(?:\/([A-G][#b]?))?\)?$/;
+const NEUTRAL_RE = /^[|\-\u2013\/()x0-9:.*%]+$/i;
+
+function isChord(t){ return CHORD_RE.test(t); }
+function isChordLine(line){
+  const toks = line.trim().split(/\s+/).filter(Boolean);
+  if(!toks.length) return false;
+  let n = 0;
+  for(const t of toks){ if(isChord(t)) n++; else if(!NEUTRAL_RE.test(t)) return false; }
+  return n > 0;
+}
+function shiftNote(n, by, useFlat){
+  const i = ((NOTE[n] + by) % 12 + 12) % 12;
+  return (useFlat ? FLAT : SHARP)[i];
+}
+function shiftChord(tok, by, useFlat){
+  const m = tok.match(CHORD_RE);
+  if(!m) return tok;
+  const open = tok.startsWith('(') ? '(' : '', close = tok.endsWith(')') && !m[2].includes('(') ? ')' : '';
+  return open + shiftNote(m[1], by, useFlat) + m[2] + (m[3] ? '/' + shiftNote(m[3], by, useFlat) : '') + close;
+}
+function transposeLine(line, by, useFlat){
+  let out = '', pos = 0, debt = 0, first = true;
+  for(const m of line.matchAll(/\S+/g)){
+    let gap = line.slice(pos, m.index);
+    if(!first){
+      const want = Math.max(1, gap.length - debt);
+      debt -= gap.length - want;
+      gap = ' '.repeat(want);
+    }
+    const t = shiftChord(m[0], by, useFlat);
+    debt += t.length - m[0].length;
+    out += gap + t; pos = m.index + m[0].length; first = false;
+  }
+  return out;
+}
+function transposeInline(line, by, useFlat){
+  return line.replace(/\[([^\]]+)\]/g, (a, c) => isChord(c) ? '[' + shiftChord(c, by, useFlat) + ']' : a);
+}
+function detectKey(text){
+  for(const l of text.split('\n')){
+    if(isChordLine(l)){
+      const t = l.trim().split(/\s+/).find(isChord);
+      const m = t.match(CHORD_RE);
+      return { root: m[1], minor: /^m(?!aj)|^min/.test(m[2]) };
+    }
+  }
+  return null;
+}
+
+/* ---------- PDF extraction ---------- */
+async function extractPages(buf){
+  const pdf = await pdfjsLib.getDocument({ data: buf }).promise;
+  const pages = [];
+  for(let p = 1; p <= pdf.numPages; p++){
+    const items = (await (await pdf.getPage(p)).getTextContent()).items.filter(i => i.str && i.str.trim());
+    if(!items.length){ pages.push([]); continue; }
+    const widths = items.filter(i => i.str.length >= 4).map(i => i.width / i.str.length).sort((a,b)=>a-b);
+    const cw = widths.length ? widths[Math.floor(widths.length/2)] : 5;
+    const rows = [];
+    for(const it of items.sort((a,b) => b.transform[5] - a.transform[5])){
+      const y = it.transform[5];
+      const row = rows.find(r => Math.abs(r.y - y) < 3);
+      row ? row.items.push(it) : rows.push({ y, items: [it] });
+    }
+    const gaps = [];
+    for(let i = 1; i < rows.length; i++) gaps.push(rows[i-1].y - rows[i].y);
+    const sorted = [...gaps].sort((a,b)=>a-b), med = sorted.length ? sorted[Math.floor(sorted.length/2)] : 12;
+    const lines = [];
+    rows.forEach((r, i) => {
+      if(i > 0 && gaps[i-1] > med * 1.7) lines.push('');
+      let s = '';
+      for(const it of r.items.sort((a,b) => a.transform[4] - b.transform[4])){
+        const col = Math.round(it.transform[4] / cw);
+        if(col > s.length) s += ' '.repeat(col - s.length);
+        else if(s && !s.endsWith(' ')) s += ' ';
+        s += it.str;
+      }
+      lines.push(s.replace(/\s+$/, ''));
+    });
+    pages.push(lines);
+  }
+  return pages;
+}
+
+function splitSongs(pages, perPage, source){
+  const songs = [];
+  const push = (title, lines) => {
+    const text = lines.join('\n').replace(/^\n+|\n+$/g, '');
+    if(text.trim()) songs.push({ id: crypto.randomUUID ? crypto.randomUUID() : String(Math.random()), title: title || 'Untitled', source, text });
+  };
+  if(perPage){
+    pages.forEach(l => { const t = l.find(x => x.trim()); if(t) push(t.trim(), l); });
+    return songs;
+  }
+  let cur = null, blank = 99;
+  const flush = () => { if(cur) push(cur.title, cur.lines); cur = null; };
+  pages.forEach(lines => {
+    lines.forEach((line, i) => {
+      if(!line.trim()){ blank++; if(cur) cur.lines.push(''); return; }
+      const next = lines[i+1];
+      const titleLike = blank >= 2 && line.trim().length <= 60 && !isChordLine(line) &&
+        !/^\[?(verse|chorus|bridge|intro|outro|pre-chorus|solo)/i.test(line.trim()) && next && next.trim();
+      if(titleLike || !cur){ flush(); cur = { title: line.trim(), lines: [line] }; }
+      else cur.lines.push(line);
+      blank = 0;
+    });
+    blank = Math.max(blank, 1);
+  });
+  flush();
+  return songs;
+}
+
+/* ---------- state ---------- */
+let songs = [], current = null, shift = 0, useFlat = false, size = 14;
+const $ = id => document.getElementById(id);
+const esc = s => s.replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c]));
+const reEsc = s => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+
+function save(){ try{ localStorage.setItem('chord-binder', JSON.stringify(songs)); }catch(e){ $('status').textContent = 'Library too large to save in this browser.'; } }
+function load(){ try{ songs = JSON.parse(localStorage.getItem('chord-binder')) || []; }catch(e){ songs = []; } }
+
+/* ---------- UI ---------- */
+function renderList(){
+  const q = $('q').value.trim().toLowerCase();
+  const hits = q ? songs.filter(s => s.title.toLowerCase().includes(q) || s.text.toLowerCase().includes(q)) : songs;
+  $('count').textContent = songs.length ? `${hits.length} of ${songs.length} songs` : 'No songs yet';
+  $('list').innerHTML = '';
+  hits.sort((a,b) => a.title.localeCompare(b.title)).forEach(s => {
+    const b = document.createElement('button');
+    b.className = 'song'; b.setAttribute('aria-current', current && current.id === s.id);
+    const k = detectKey(s.text);
+    b.innerHTML = `<b>${esc(s.title)}</b><span>${esc(s.source)}${k ? ' \u2022 ' + k.root + (k.minor ? 'm' : '') : ''}</span>`;
+    b.onclick = () => { current = s; shift = 0; useFlat = k ? /b/.test(k.root) : false; render(); };
+    $('list').appendChild(b);
+  });
+}
+
+function renderSong(){
+  const s = current, q = $('q').value.trim();
+  const key = detectKey(s.text);
+  const keyTxt = key ? shiftNote(key.root, shift, useFlat) + (key.minor ? 'm' : '') : '\u2013';
+  const re = q ? new RegExp(reEsc(esc(q)), 'gi') : null;
+  const hl = t => re ? t.replace(re, m => `<mark>${m}</mark>`) : t;
+  const html = s.text.split('\n').map(line => {
+    if(isChordLine(line)) return `<span class="chord">${hl(esc(transposeLine(line, shift, useFlat)))}</span>`;
+    return hl(esc(transposeInline(line, shift, useFlat)));
+  }).join('\n');
+  $('view').innerHTML = `
+    <div class="bar">
+      <h2>${hl(esc(s.title))}</h2>
+      <div class="grp"><button id="dn" aria-label="Down one semitone">\u2212</button><output>Key ${keyTxt}${shift ? ' (' + (shift > 0 ? '+' : '') + shift + ')' : ''}</output><button id="up" aria-label="Up one semitone">+</button></div>
+      <button class="btn" id="rs">Original key</button>
+      <button class="btn" id="fl">${useFlat ? 'Use \u266F' : 'Use \u266D'}</button>
+      <div class="grp"><button id="sm" aria-label="Smaller text">A\u2212</button><button id="lg" aria-label="Larger text">A+</button></div>
+      <button class="btn" id="rm">Remove song</button>
+    </div>
+    <pre style="--font-size:${size}px">${html}</pre>`;
+  $('dn').onclick = () => { shift = ((shift - 1 + 5) % 12 + 12) % 12 - 5; renderSong(); };
+  $('up').onclick = () => { shift = ((shift + 1 + 5) % 12 + 12) % 12 - 5; renderSong(); };
+  $('rs').onclick = () => { shift = 0; renderSong(); };
+  $('fl').onclick = () => { useFlat = !useFlat; renderSong(); };
+  $('sm').onclick = () => { size = Math.max(9, size - 1); renderSong(); };
+  $('lg').onclick = () => { size = Math.min(28, size + 1); renderSong(); };
+  $('rm').onclick = () => { songs = songs.filter(x => x.id !== s.id); current = null; save(); render(); };
+}
+
+function render(){
+  renderList();
+  if(current) renderSong();
+  else $('view').innerHTML = `<div class="empty"><h2>${songs.length ? 'Pick a song' : 'Add your chord PDF'}</h2>
+    <p>${songs.length ? 'Choose a song from the list, or search for a title, lyric or chord.' : 'Drop a PDF anywhere on this page or use Add PDF. Everything is read in your browser and stays on your device.'}</p></div>`;
+}
+
+async function addFiles(files){
+  for(const f of files){
+    if(f.type !== 'application/pdf' && !/\.pdf$/i.test(f.name)) continue;
+    $('status').textContent = 'Reading ' + f.name + '\u2026';
+    try{
+      const pages = await extractPages(await f.arrayBuffer());
+      const found = splitSongs(pages, $('perpage').checked, f.name.replace(/\.pdf$/i, ''));
+      if(!found.length) $('status').textContent = 'No text found in ' + f.name + '. Scanned PDFs need OCR first.';
+      else { songs.push(...found); $('status').textContent = `Added ${found.length} song${found.length === 1 ? '' : 's'} from ${f.name}.`; }
+    }catch(e){ $('status').textContent = 'Could not read ' + f.name + '.'; console.error(e); }
+  }
+  save(); render();
+}
+
+$('add').onclick = () => $('file').click();
+$('file').onchange = e => { addFiles([...e.target.files]); e.target.value = ''; };
+$('q').oninput = render;
+$('clear').onclick = () => { if(songs.length && confirm('Remove all songs from this browser?')){ songs = []; current = null; save(); render(); } };
+$('theme').onclick = () => {
+  const r = document.documentElement, dark = getComputedStyle(r).getPropertyValue('--bg').trim() === '#12171d';
+  r.dataset.theme = dark ? 'light' : 'dark';
+};
+const drop = $('drop');
+['dragenter','dragover'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+['dragleave','drop'].forEach(ev => document.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+document.addEventListener('drop', e => addFiles([...e.dataTransfer.files]));
+
+load(); render();
+</script>
+</body>
+</html>
